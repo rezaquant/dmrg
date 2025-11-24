@@ -1,0 +1,11 @@
+.ipynb_checkpoints/
+__pycache__/
+.DS_Store
+*.pyc
+*.pyo
+.venv/
+.env
+.pytest_cache/
+.mypy_cache/
+cash/
+nohup.out
