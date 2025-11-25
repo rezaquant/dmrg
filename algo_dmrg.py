@@ -14,6 +14,7 @@ import autoray as ar
 import time
 import numpy as np
 import re
+from typing import Optional, Sequence, Dict, Any, List
 
 import logging
 logger = logging.getLogger(__name__)
@@ -158,30 +159,43 @@ class FIT:
         If True, (re)tag the target TN for environment construction.
     """
 
-    def __init__(self, tn, p=None, cutoffs=1.e-10, backend=None, 
-                 site_tag_id="I{}", opt = "auto-hq", range_int=[],
-                 re_tag=False, info={}, warning=True):
+    def __init__(
+        self,
+        tn: qtn.TensorNetwork,
+        p: Optional[qtn.TensorNetwork] = None,
+        cutoffs: float = 1.e-12,
+        backend: Optional[str] = None,
+        site_tag_id: str = "I{}",
+        opt: str = "auto-hq",
+        range_int: Optional[Sequence[int]] = None,
+        re_tag: bool = False,
+        info: Optional[Dict[str, Any]] = None,
+        warning: bool = False,
+        stop_grad_: bool = False, 
+    ):
 
+        if p is None:
+            raise ValueError("Initial MPS `p` must be provided for FIT.")
         if not isinstance(p, (qtn.MatrixProductState, qtn.MatrixProductOperator)):
-            if warning:
-                logger.warning("No initial MPS `p` provided. FIT requires an initial state for fitting.")        
-        
+            raise TypeError("Initial MPS `p` must be MatrixProductState or MatrixProductOperator.")
+
         self.L = len(p.tensor_map.keys())
-        
-        self.p = p.copy() if p is not None else None
-        self.p.apply_to_arrays(stop_grad)
+
+        self.p = p.copy()
+        if stop_grad_:
+            self.p.apply_to_arrays(stop_grad)
+
+        self.tn = tn.copy()
 
         
         if site_tag_id:
-            self.p.view_as_(qtn.MatrixProductState, L = self.L, 
+            self.p.view_as_(qtn.MatrixProductState, L=self.L, 
                             site_tag_id=site_tag_id, site_ind_id=None, 
                             cyclic=False)
         
         
-        
-        
         self.site_tag_id = site_tag_id
-        self.tn = tn.copy()
+        
         
         # contengra path finder
         self.opt = opt
@@ -194,10 +208,16 @@ class FIT:
         self.warning = warning
         
         # store cost fucntion results
-        self.loss = []
-        self.loss_ = []
-        self.info = info
-        self.range_int = range_int
+        self.loss: List[float] = []
+        self.loss_: List[float] = []
+        self.info: Dict[str, Any] = info or {}
+        self.range_int: List[int] = list(range_int) if range_int is not None else []
+        if self.range_int:
+            if len(self.range_int) != 2:
+                raise ValueError("range_int must be a sequence of two integers: (start, stop).")
+            start, stop = self.range_int
+            if start >= stop:
+                raise ValueError("range_int must satisfy start < stop.")
 
         
         # Is there a better solution?
@@ -208,8 +228,7 @@ class FIT:
 
         
         if set(self.tn.outer_inds()) != set(self.p.outer_inds()):
-            if warning:
-                logger.warning("tn & p contains different outer inds ")        
+            raise ValueError("tn and p have different outer indices.")
 
         
         # re_new tags of tn to be used for effective envs: use interal function "re_tag" to retag
@@ -217,9 +236,10 @@ class FIT:
             self._re_tag()
 
 
-    def visual(self, figsize=(14, 14), layout="neato", show_tags=False, tags_=[], show_inds=False):
+    def visual(self, figsize=(14, 14), layout="neato", show_tags=False, tags_: Optional[Sequence[str]] = None, show_inds=False):
         # Visualize network with MPS
-        tags = [  self.site_tag_id.format(i)  for i in range(self.L)] + tags_
+        tag_list = tags_ if tags_ is not None else []
+        tags = [self.site_tag_id.format(i) for i in range(self.L)] + tag_list
         return (self.tn & self.p).draw(tags, legend=False, show_inds=show_inds,
                                  show_tags=show_tags, figsize=figsize, node_outline_darkness=0.1, 
                                        node_outline_size=None, highlight_inds_color="darkred",
@@ -227,7 +247,6 @@ class FIT:
                                       highlight_inds=self.p.outer_inds(),
                                       )
 
-    
     # -------------------------
     # Tagging methods
     # -------------------------
@@ -534,6 +553,8 @@ class FIT:
         L = self.L
         opt = self.opt
 
+        if len(self.range_int) != 2:
+            raise ValueError("range_int must be set to (start, stop) before calling run_gate.")
         start, stop = self.range_int 
         
         env_left = { site_tag_id.format(i):None   for i in range(psi.L)}
